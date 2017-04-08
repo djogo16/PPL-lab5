@@ -45,12 +45,16 @@ object Lab5 extends jsy.util.JsyApplication with Lab5Like {
       case Binary(bop, e1, e2) => ren(env,e1) flatMap{e1p=>
         ren(env,e2) map (e2p => Binary(bop,e1p,e2p))}
 
-      case If(e1, e2, e3) => ???
+      case If(e1, e2, e3) =>  ren(env, e1).flatMap(e1p => ren(env, e2).flatMap( e2p => ren(env, e3).map(e3p => If(e1p, e2p, e3p))))
 
-      case Var(x) => ???
+
+      case Var(x) => doreturn(Var(env.getOrElse(x, x)))
 
       case Decl(m, x, e1, e2) => fresh(x) flatMap { xp =>
-        ???
+        val envp = extend(env, x, xp)
+        ren(env, e1).flatMap(e1p => {
+          ren(envp, e2).map((e2p) => Decl(m, xp, e1p, e2p))
+        })
       }
 
       case Function(p, params, retty, e1) => {
@@ -134,9 +138,10 @@ object Lab5 extends jsy.util.JsyApplication with Lab5Like {
   // don't have to be the same type. many random ones
   def mapWith[W,A,B,C,D](m: Map[A,B])(f: ((A,B)) => DoWith[W,(C,D)]): DoWith[W,Map[C,D]] = {
 
-    m.foldRight[DoWith[W,Map[C,D]]]( doreturn(Map.empty) ) {
-      (a, acc) => acc.flatMap (mapacc => f(a).map (kval => mapacc + kval))
+    m.foldRight[DoWith[W, Map[C, D]]](doreturn(Map.empty)) {
+      (a, acc) => acc.flatMap(mapacc => f(a).map(kval => mapacc + kval))
 
+    }
   }
 
   // Just like mapFirst from Lab 4 but uses a callback f that returns a DoWith in the Some case.
@@ -199,11 +204,11 @@ object Lab5 extends jsy.util.JsyApplication with Lab5Like {
     case _ => false
   }
 
-  def isBindex(m: Mode, e: Expr): Boolean = m match{
+  def isBindex(m: Mode, e: Expr): Boolean = m match {
     case MVar | MConst | MName => true
     case MRef => if (isLExpr(e)) true else false
-    case _=> false
-
+    case _ => false
+  }
 
   def typeof(env: TEnv, e: Expr): Typ = {
     def err[T](tgot: Typ, e1: Expr): T = throw StaticTypeError(tgot, e1, e)
@@ -246,6 +251,7 @@ object Lab5 extends jsy.util.JsyApplication with Lab5Like {
           case (_, tgot) if (hasFunctionTyp(tgot)) => err(tgot, e2);
           case (t1, t2) => if (t1 == t2) TBool else err(t2, e2)
         }
+
       case Binary(Lt | Le | Gt | Ge, e1, e2) => (typeof(env, e1), typeof(env, e2)) match {
         case (TNumber, TNumber) => TBool
         case (TString, TString) => TBool
@@ -272,7 +278,7 @@ object Lab5 extends jsy.util.JsyApplication with Lab5Like {
       }
 
       case Obj(fields) => TObj(fields.mapValues { case (e1) => typeof(env, e1) })
-   
+
 
       case GetField(e1, f) => typeof(env,e1) match {
         case TObj(fields) => fields.get(f) match {
@@ -396,23 +402,27 @@ object Lab5 extends jsy.util.JsyApplication with Lab5Like {
     def subst(e: Expr): Expr = e match {
       case N(_) | B(_) | Undefined | S(_) | Null | A(_) => e
       case Print(e1) => Print(subst(e1))
-        /***** Cases from Lab 3 */
+
+      /** *** Cases from Lab 3 */
       case Unary(uop, e1) => Unary(uop, subst(e1))
       case Binary(bop, e1, e2) => Binary(bop, subst(e1), subst(e2))
       case If(e1, e2, e3) => If(subst(e1), subst(e2), subst(e3))
-      case Var(y) => if (y ==x) esub else e
-        /***** Cases need a small adaption from Lab 3 */
+      case Var(y) => if (y == x) esub else e
+
+      /** *** Cases need a small adaption from Lab 3 */
       case Decl(mut, y, e1, e2) => Decl(mut, y, subst(e1), if (x == y) e2 else subst(e2))
-        /***** Cases needing adapting from Lab 4 */
+
+      /** *** Cases needing adapting from Lab 4 */
       case Function(p, paramse, retty, e1) =>
         if (p.contains(x) || paramse.exists { case (name, _) => name == x }) e
         else Function(p, paramse, retty, subst(e1))
-        //
-        /***** Cases directly from Lab 4 */
-      case Call(e1, args) => Call(subst(e1),args.map(subst))
+      //
+      /** *** Cases directly from Lab 4 */
+      case Call(e1, args) => Call(subst(e1), args.map(subst))
       case Obj(fields) => Obj(fields.mapValues(ev => subst(ev)))
-      case GetField(e1, f) => if (x == f) e else GetField(subst(e1),f)
-        /***** New case for Lab 5 */
+      case GetField(e1, f) => if (x == f) e else GetField(subst(e1), f)
+
+      /** *** New case for Lab 5 */
       case Assign(e1, e2) => Assign(subst(e1), subst(e2))
 
       /* Should not match: should have been removed */
@@ -421,11 +431,15 @@ object Lab5 extends jsy.util.JsyApplication with Lab5Like {
 
     def myrename(e: Expr): Expr = {
       val fvs = freeVars(esub)
-      def fresh(x: String): String = if (fvs contains x) fresh(x + "$") else x
-      rename[Unit](e)(Nil){ x => doreturn(fresh(x)) }
 
-    subst(myrename(e))
+      def fresh(x: String): String = if (fvs contains x) fresh(x + "$") else x
+
+      rename[Unit](e)(Nil) { x => doreturn(fresh(x)) }
+    }
+      subst(myrename(e))
   }
+
+
 
   /* Check whether or not an expression is reduced enough to be applied given a mode. */
   def isRedex(mode: Mode, e: Expr): Boolean = mode match {
@@ -433,7 +447,7 @@ object Lab5 extends jsy.util.JsyApplication with Lab5Like {
     case MName => false
     case MRef => !isLValue(e)
     case _ => throw DynamicTypeError(e)
-
+  }
 
   def getBinding(mode: Mode, e: Expr): DoWith[Mem,Expr] = {
     require(!isRedex(mode,e), s"expression ${e} must not reducible under mode ${mode}")
@@ -457,13 +471,42 @@ object Lab5 extends jsy.util.JsyApplication with Lab5Like {
         /***** Cases needing adapting from Lab 3. */
 
       case Unary(Neg, N(n1)) => doreturn(N(-n1)) //doreturn leaves memory unchanged
+      case Unary(Not, B(v1)) => doreturn(B(!v1))
+      case Binary(Seq, v1, e2) if isValue(v1) => {
+        doreturn(e2)
+      }
+
+      case Binary(Plus, N(n1), N(n2)) => doreturn(N(n1 + n2))
+      case Binary(Minus, N(n1), N(n2)) => doreturn(N(n1 - n2))
+      case Binary(Times, N(n1), N(n2)) => doreturn(N(n1 * n2))
+      case Binary(Div, N(n1), N(n2)) => doreturn(N(n1 / n2))
+
+      case Binary(Plus, S(s1), S(s2)) => doreturn(S(s1 + s2))
+
+      case Binary(bop@(Lt | Le | Gt | Ge), N(n1), N(n2)) => doreturn(B(inequalityVal(bop, N(n1), N(n2))))
+
+      case Binary(bop@(Lt | Le | Gt | Ge), S(s1), S(s2)) => doreturn(B(inequalityVal(bop, S(s1), S(s2))))
+
+      case Binary(Eq, v1, v2) if isValue(v1) && isValue(v2) => doreturn(B(v1 == v2))
+
+      case Binary(And, B(true), e2) => doreturn(e2)
+      case Binary(And, B(false), _) => doreturn(B(false))
+
+      case Binary(Or, B(true), _) => doreturn(B(true))
+      case Binary(Or, B(false), e2) => doreturn(e2)
+
+      case If(B(true), e2, _) => doreturn(e2)
+      case If(B(false), _, e3) => doreturn(e3)
         /***** More cases here */
         /***** Cases needing adapting from Lab 4. */
       case Obj(fields) if (fields forall { case (_, vi) => isValue(vi)}) =>
         memalloc(e)
-      case GetField(a @ A(_), f) => doget map { w =>
-        w.get(a) match {
-          case Some(Obj(fields))=> fields(f)
+      case GetField(a @ A(_), f) => doget map { (m : Mem) => m.get(a) match {
+          case Some(Obj(fields))=> fields.get(f) match{
+            case Some(v) => v
+            case _ => throw NullDereferenceError(e)
+        }
+          case _ => throw NullDereferenceError(e)
         }
 
       }
@@ -520,10 +563,19 @@ object Lab5 extends jsy.util.JsyApplication with Lab5Like {
         }
         else {
           val dwpazipp = mapFirstWith(pazip) {
-            ???
+            case (m @ (_,MTyp(mode,_)) ,ei) => if (isRedex(mode,ei)) Some(step(ei) map { eip => (m,eip)}) else None
           }
-          ???
+          dwpazipp map {
+            callp => Call(v, callp.unzip._2)
+          }
         }
+      }
+      case Unary(Cast(t),Null) if(t == Obj) => doreturn(Null)
+      case Unary(Cast(t),v) if (isValue(v)) => v match {
+        case A(_) => throw DynamicTypeError(e)
+        case Null => doreturn(Null)
+        case _ => doreturn(v)
+
       }
 
       /* Base Cases: Error Rules */
@@ -533,24 +585,47 @@ object Lab5 extends jsy.util.JsyApplication with Lab5Like {
       /* Inductive Cases: Search Rules */
         /***** Cases needing adapting from Lab 3. Make sure to replace the case _ => ???. */
       case Print(e1) => step(e1) map { e1p => Print(e1p) }
-      case Unary(uop, e1) =>
-        ???
-        /***** Cases needing adapting from Lab 4 */
-      case GetField(e1, f) =>
-        ???
-      case Obj(fields) =>
-        ???
+      case Unary(uop, e1) => step(e1) map {   //map gets e1p out of DoWith
+        e1p => Unary(uop,e1p)
+      }
+      case Binary(bop,v1,e2) if (isValue(v1))=> step(e2) map {
+        e2p => Binary(bop,v1,e2p)
+      }
+      case Binary(bop,e1,e2) => step(e1) map {
+        e1p => Binary(bop,e1p,e2)
+      }
+      case If(e1,e2,e3) => step(e1) map {
+        e1p => If(e1p,e2,e3)
+      }
 
-      case Decl(mode, x, e1, e2) => ???
 
-      case Call(e1, args) =>
-        ???
+      /***** Cases needing adapting from Lab 4 */
+      case GetField(e1, f) => step(e1) map {
+        e1p => GetField(e1p,f)
+      }
+
+      case GetField(Null, f) => throw NullDereferenceError(e)
+
+      case Obj(fields) =>  val fieldFound = fields.find{case (name, ex) => !isValue(ex)}
+        fieldFound match {
+          case Some((key, value)) =>
+            step(value) map {
+              valuep => Obj(fields + (key->valuep))
+            }
+          case None => doreturn(Obj(fields))
+        }
+
+      case Decl(mode, x, e1, e2) if(isRedex(mode,e1)) => step(e1) map {
+    e1p => Decl(mode,x,e1p,e2)}
+
+      case Call(e1, args) => step(e1) map { e1p => Call(e1p,args) }
 
         /***** New cases for Lab 5.  */
-      case Assign(e1, e2) if ??? =>
-        ???
-      case Assign(e1, e2) =>
-        ???
+      case Assign(e1, e2) if(!isLValue(e1)) => step(e1) map {
+    e1p => Assign(e1p,e2)
+    }
+      case Assign(v1, e2) if(isLValue(v1)) => step(e2) map { e2p => Assign(v1,e2p) }
+
 
       /* Everything else is a stuck error. */
       case _ => throw StuckError(e)
